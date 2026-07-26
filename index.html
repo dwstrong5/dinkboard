@@ -359,7 +359,15 @@ input{font-family:inherit;}
   background:var(--kitchen);
 }
 .round-dashes span.done{ background:var(--court); }
-.round-dashes span.current{ background:var(--ball-dark); }
+.round-dashes span.current{ box-shadow:0 0 0 2px var(--ball-dark); }
+
+.round-progress-note{
+  text-align:center;
+  font-size:12px;
+  font-weight:600;
+  color:var(--ink-soft);
+  margin-bottom:16px;
+}
 
 .bye-note{
   font-size:12.5px;
@@ -377,6 +385,10 @@ input{font-family:inherit;}
   box-shadow:var(--shadow);
   margin-bottom:16px;
   overflow:hidden;
+  border:1.5px solid transparent;
+}
+.court-card.scored{
+  border-color:var(--court);
 }
 .court-card-label{
   font-size:11px;
@@ -391,6 +403,12 @@ input{font-family:inherit;}
   text-transform:none;
   letter-spacing:0;
   color:#8ea0b5;
+}
+.court-card-label .scored-badge{
+  font-weight:700;
+  text-transform:none;
+  letter-spacing:0;
+  color:var(--court);
 }
 .court-body{
   display:flex;
@@ -1033,8 +1051,17 @@ function renderSetup(){
   });
 }
 
+function isMatchupComplete(m){
+  return m.scoreA !== '' && m.scoreB !== '' &&
+    !isNaN(parseInt(m.scoreA,10)) && !isNaN(parseInt(m.scoreB,10));
+}
+function isRoundComplete(round){
+  return round.matchups.length > 0 && round.matchups.every(isMatchupComplete);
+}
+
 function renderRounds(){
   const round = state.rounds[state.currentRound];
+  const completedCount = round.matchups.filter(isMatchupComplete).length;
   app.innerHTML = `
     ${headerHTML(true)}
     <div class="content">
@@ -1044,14 +1071,17 @@ function renderRounds(){
         <button class="round-nav-btn" id="round-next" ${state.currentRound===state.numRounds-1?'disabled':''}>›</button>
       </div>
       <div class="round-dashes">
-        ${state.rounds.map((_,i)=>`<span class="${i<state.currentRound?'done':i===state.currentRound?'current':''}"></span>`).join('')}
+        ${state.rounds.map((r,i)=>`<span class="${isRoundComplete(r)?'done':''} ${i===state.currentRound?'current':''}"></span>`).join('')}
       </div>
+      <div class="round-progress-note">${completedCount} of ${round.matchups.length} court${round.matchups.length>1?'s':''} scored</div>
 
       ${round.sitOut.length ? `<div class="bye-note">Sitting out this round: ${round.sitOut.map(playerName).join(', ')}</div>` : ''}
 
-      ${round.matchups.map((m,mi)=>`
-        <div class="court-card">
-          <div class="court-card-label">Court ${mi+1} <span class="tap-hint">— tap the winner</span></div>
+      ${round.matchups.map((m,mi)=>{
+        const done = isMatchupComplete(m);
+        return `
+        <div class="court-card ${done?'scored':''}">
+          <div class="court-card-label">Court ${mi+1} ${done ? `<span class="scored-badge">✓ Scored</span>` : `<span class="tap-hint">— tap the winner</span>`}</div>
           <div class="court-body">
             <div class="team-side selectable ${String(m.scoreA)===String(state.gamesTo)?'winner':''}" data-round="${state.currentRound}" data-match="${mi}" data-team="A">
               ${m.teamA.map(id=>`<div class="p-name">${escapeHTML(playerName(id))}</div>`).join('')}
@@ -1069,7 +1099,7 @@ function renderRounds(){
             <input type="number" min="0" max="${state.gamesTo}" class="score-input" data-round="${state.currentRound}" data-match="${mi}" data-team="B" value="${m.scoreB}" placeholder="0">
           </div>
         </div>
-      `).join('')}
+      `;}).join('')}
 
       ${state.currentRound === state.numRounds-1 ? `<button class="primary-btn" id="btn-see-standings">See final standings</button>` : ''}
     </div>
@@ -1086,6 +1116,24 @@ function renderRounds(){
     inp.addEventListener('input', ()=>{
       const r = inp.dataset.round, mi = inp.dataset.match, team = inp.dataset.team;
       state.rounds[r].matchups[mi]['score'+team] = inp.value;
+      // live-update the completion badge/dashes without losing focus
+      const label = inp.closest('.court-card').querySelector('.court-card-label');
+      const m = state.rounds[r].matchups[mi];
+      if(isMatchupComplete(m)){
+        inp.closest('.court-card').classList.add('scored');
+        label.innerHTML = `Court ${parseInt(mi,10)+1} <span class="scored-badge">✓ Scored</span>`;
+      } else {
+        inp.closest('.court-card').classList.remove('scored');
+        label.innerHTML = `Court ${parseInt(mi,10)+1} <span class="tap-hint">— tap the winner</span>`;
+      }
+      const progressNote = document.querySelector('.round-progress-note');
+      if(progressNote){
+        const completed = state.rounds[r].matchups.filter(isMatchupComplete).length;
+        const total = state.rounds[r].matchups.length;
+        progressNote.textContent = `${completed} of ${total} court${total>1?'s':''} scored`;
+      }
+      const dashes = document.querySelectorAll('.round-dashes span');
+      if(dashes[r]) dashes[r].classList.toggle('done', isRoundComplete(state.rounds[r]));
     });
   });
 
@@ -1095,13 +1143,22 @@ function renderRounds(){
       const other = team === 'A' ? 'B' : 'A';
       const m = state.rounds[r].matchups[mi];
       const isAlreadyWinner = String(m['score'+team]) === String(state.gamesTo);
+      let justWon = false;
       if(isAlreadyWinner){
         m['score'+team] = '';
       } else {
         m['score'+team] = String(state.gamesTo);
         if(String(m['score'+other]) === String(state.gamesTo)) m['score'+other] = '';
+        justWon = true;
       }
       render();
+      if(justWon){
+        const loserInput = document.querySelector(`.score-input[data-round="${r}"][data-match="${mi}"][data-team="${other}"]`);
+        if(loserInput){
+          loserInput.focus();
+          loserInput.select();
+        }
+      }
     });
   });
 }
@@ -1109,11 +1166,13 @@ function renderRounds(){
 function renderStandings(){
   const standings = computeStandings();
   const anyScores = state.rounds.some(r=>r.matchups.some(m=>m.scoreA!=='' && m.scoreB!==''));
+  const completedRounds = state.rounds.filter(isRoundComplete).length;
   app.innerHTML = `
     ${headerHTML(true)}
     <div class="content">
       <h2 class="section-title">Standings</h2>
       <p class="section-help">Win-loss record across all entered rounds.</p>
+      ${state.rounds.length ? `<div class="round-progress-note">${completedRounds} of ${state.rounds.length} round${state.rounds.length>1?'s':''} fully scored</div>` : ''}
       <div class="card">
         ${anyScores ? `
         <table class="standings-table">
